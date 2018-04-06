@@ -1,0 +1,18 @@
+--- crossbuild.old	2018-04-06 23:01:33.026567997 +0200
++++ crossbuild.new	2018-04-06 23:03:59.943960533 +0200
+@@ -32,15 +32,9 @@
+ 	echo "${CROSS_TRIPLE} not yet implemented." && exit 1 ;;
+ esac
+ 
+-# store original PATH and LD_LIBRARY_PATH
+-if [ -z ${PATH_ORIGIN+x} ]; then export PATH_ORIGIN=${PATH}; fi
+-if [ -z ${LD_LIBRARY_PATH_ORIGIN+x} ]; then export LD_LIBRARY_PATH_ORIGIN=${LD_LIBRARY_PATH}; fi
+-
+ # configure environment
+ if [ -n "${CROSS_TRIPLE}" ]; then
+     export CROSS_ROOT="/usr/${CROSS_TRIPLE}"
+-    export PATH="${CROSS_ROOT}/bin:${PATH_ORIGIN}"
+-    export LD_LIBRARY_PATH="/usr/x86_64-linux-gnu/${CROSS_TRIPLE}/lib:${LD_LIBRARY_PATH_ORIGIN}"
+ fi
+ 
+ # try to exec direct binary instead on relying on the $PATH

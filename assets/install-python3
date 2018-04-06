@@ -1,0 +1,22 @@
+#!/bin/bash
+set -o errexit
+set -o xtrace
+set -o pipefail
+
+apt-get install -qqy make build-essential libssl-dev zlib1g-dev \
+                          libbz2-dev libreadline-dev libsqlite3-dev \
+                          wget curl xz-utils tk-dev
+
+version=3.6.5
+wget --progress=bar:force "https://www.python.org/ftp/python/$version/Python-$version.tgz" -O python.tgz
+mkdir python
+tar -xzvf python.tgz --strip-components=1 -C python
+
+pushd python
+./configure
+#./configure --enable-optimizations
+make -j8
+make install
+popd
+
+rm -rf python python.tgz

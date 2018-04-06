@@ -1,0 +1,4 @@
+#!/bin/sh
+# Should be run in docker container from the build directory.
+set -o errexit
+conan create "$(dirname "$0")"

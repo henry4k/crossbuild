@@ -1,0 +1,15 @@
+#!/bin/sh
+set -o errexit
+
+extra_args=
+cmd="$1"
+shift 1
+
+if [ -n "$CROSS_TRIPLE" ]; then
+    case "$cmd" in
+        create|install)
+            extra_args="--profile $CROSS_TRIPLE"
+            ;;
+    esac
+fi
+conan-original $cmd $extra_args $@

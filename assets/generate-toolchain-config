@@ -1,0 +1,210 @@
+#!/usr/bin/env lua5.1
+local parser = require'argparse'()
+
+parser:argument'host'
+    :description'Identifier of the host machine: <cpu>-<vendor>-<os>'
+    :args(1)
+
+parser:option'--conan-profile'
+    :description'Generated conan profile is written to this file.'
+    :argname'<file>'
+    :args(1)
+
+parser:option'--meson-cross-file'
+    :description'Generated Meson cross-file is written to this path.'
+    :argname'<file>'
+    :args(1)
+
+
+local args = parser:parse()
+
+local lfs = require'lfs'
+local path = require'path'
+
+local function gather_files(dir)
+    local r = {}
+    for entry in lfs.dir(dir) do
+        local file = path.join(dir, entry)
+        if lfs.attributes(file, 'mode') ~= 'directory' then
+            r[entry] = file
+        end
+    end
+    return r
+end
+
+local function read_command(cmd)
+    local process = assert(io.popen(cmd, 'r'))
+    local output = process:read('*a')
+    process:close()
+    return output
+end
+
+local function gather_compiler_info(compiler)
+    local text = read_command(compiler..' -v --version 2>&1')
+    local name, version = text:match'([^%s]+) version (%d%.%d)'
+    local target = text:match'Target: ([^%s]+)'
+    local thread_model = text:match'Thread model: ([^%s]+)'
+    return {name = name,
+            version = version,
+            target = target,
+            thread_model = thread_model}
+end
+
+local host_cpu, host_vendor =
+    assert(args.host:match'^(.-)%-(.-)%-(.-)$')
+local host_cpu_family = (function()
+    if host_cpu:match('^arm') or
+       host_cpu:match('^aarch') then
+        return 'arm'
+    elseif host_cpu:match('^powerpc') then
+        return 'powerpc'
+    elseif host_cpu:match('^x86_64') then
+        return 'x86_64'
+    elseif host_cpu:match('^mips') then
+        return 'mips'
+    end
+end)()
+
+local base_dir = path.join('/usr', args.host)
+local executables = gather_files(path.join(base_dir, 'bin'))
+
+local function find_executable_by_name(name)
+    if name:match'%*%+%^%$' then -- is pattern
+        for k, v in pairs(executables) do
+            if k:match(name) then
+                return v
+            end
+        end
+    else
+        return executables[name]
+    end
+end
+
+local function find_executable(...)
+    local names = {...}
+    for _, name in ipairs(names) do
+        local filename = find_executable_by_name(name)
+        if filename then
+            return filename
+        end
+    end
+    return nil, 'Can\'t find executable for '..table.concat(names, ', ')
+end
+
+local compiler_c   = assert(find_executable('gcc', 'clang', 'cc'))
+local compiler_cpp =        find_executable('g++', 'clang++', 'c++')
+local ar           = assert(find_executable('ar'))
+local strip        =        find_executable('strip')
+local pkgconfig    =        find_executable('pkg-config', 'pkgconf')
+local gcov         =        find_executable('gcov')
+local windres      =        find_executable('windres')
+
+local compiler_info = gather_compiler_info(compiler_c)
+
+local function write_conan_ini(filename, sections)
+    local file = assert(io.open(filename, 'w'))
+
+    local function write_property(name, value)
+        if type(value) == 'table' then
+            local self = assert(value._)
+            write_property(name, self)
+            for k, v in pairs(value) do
+                if k ~= '_' then
+                    write_property(name..'.'..k, v)
+                end
+            end
+        else
+            file:write(name, '=', tostring(value), '\n')
+        end
+    end
+
+    for section_name, section_content in pairs(sections) do
+        file:write('[', section_name, ']\n')
+        for property_name, property_value in pairs(section_content) do
+            write_property(property_name, property_value)
+        end
+    end
+    file:close()
+end
+
+local function write_meson_ini(filename, sections)
+    local file = assert(io.open(filename, 'w'))
+    for section_name, section_content in pairs(sections) do
+        file:write('[', section_name, ']\n')
+        for property_name, property_value in pairs(section_content) do
+            file:write(property_name, ' = ')
+            if type(property_value) == 'string' then
+                file:write("'", property_value, "'")
+            else
+                file:write(tostring(property_value))
+                -- TODO: support lists
+            end
+            file:write('\n')
+        end
+    end
+    file:close()
+end
+
+local function write_conan_profile()
+    local filename = args.conan_profile
+    if not filename then
+        filename = path.join(path.user_home(), '.conan/profiles', args.host)
+        path.mkdir(path.dirname(filename))
+    end
+
+    local os_by_vendor = {linux = 'Linux',
+                          apple = 'Apple',
+                          w32   = 'Windows',
+                          w64   = 'Windows'}
+    local settings = {os = os_by_vendor[host_vendor],
+                      arch = host_cpu,
+                      compiler = {_ = compiler_info.name,
+                                  version = compiler_info.version,
+                                  libcxx = 'libstdc++'}}
+
+    local env = {CC = compiler_c,
+                 CXX = compiler_cpp,
+                 AR = ar,
+                 STRIP = strip,
+                 PKGCONFIG = pkgconfig,
+                 GCOV = gcov,
+                 WINDRES = windres,
+                 PATH = '['..path.join(base_dir, 'bin')..']'} -- prepend bin directory
+    -- See https://conanio.readthedocs.io/en/latest/reference/profiles.html#package-settings-and-env-vars
+
+    write_conan_ini(filename, {settings = settings,
+                               env = env})
+end
+
+local function write_meson_cross_file()
+    local filename = args.filename
+    if not filename then
+        filename = path.join('/usr/share/meson/cross', args.host)
+        path.mkdir(path.dirname(filename))
+    end
+
+    local system_by_vendor = {w32 = 'windows',
+                              w64 = 'windows',
+                              apple = 'darwin'}
+    local host_machine = {system = system_by_vendor[host_vendor] or host_vendor,
+                          cpu = host_cpu,
+                          cpu_family = host_cpu_family,
+                          endian = 'little'} -- TODO
+
+    local binaries = {c = compiler_c,
+                      cpp = compiler_cpp,
+                      ar = ar,
+                      strip = strip,
+                      pkgconfig = pkgconfig,
+                      gcov = gcov,
+                      windres = windres}
+
+    local properties = {root = base_dir}
+
+    write_meson_ini(filename, {host_machine = host_machine,
+                               binaries = binaries,
+                               properties = properties})
+end
+
+write_conan_profile()
+write_meson_cross_file()

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Should be run in docker container from the build directory.
+set -o errexit
+meson "$(dirname "$0")"
+ninja

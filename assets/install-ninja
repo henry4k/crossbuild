@@ -1,29 +1,9 @@
 #!/bin/bash
-
-#
-# Configure, build and install ninja
-#
-# Usage:
-#
-#  install-ninja.sh [-python /path/to/bin/python]
-
-set -e
+set -o errexit
+set -o xtrace
 set -o pipefail
 
-PYTHON=python
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -python)
-      PYTHON=$2
-      shift
-      ;;
-    *)
-      echo "Usage: Usage: ${0##*/} [-python /path/to/bin/python]"
-      exit 1
-      ;;
-  esac
-  shift
-done
+PYTHON=python3
 
 # Download
 REV=v1.7.2
