@@ -1,0 +1,49 @@
+#!/bin/sh
+# Automatically configures, builds and installs software.
+#
+# Behaviour is controlled by these environment variables:
+#   CROSS_TRIPLE: A supported host triple. (Required!)
+#   CMAKE_TOOLCHAIN_DIR
+#   ACB_SOURCE_DIR
+#   ACB_INSTALL_DIR
+#   ACB_BUILD_STEPS: Ninja is run with these in order.
+#   ACB_CONAN_INSTALL_ARGS
+#   ACB_MESON_ARGS
+#   ACB_CMAKE_ARGS
+#   ACB_NINJA_ARGS
+#
+
+set -o errexit
+set -o xtrace
+
+triple="${CROSS_TRIPLE:?}"
+cmake_toolchain_dir="${CMAKE_TOOLCHAIN_DIR:?}"
+source_dir="${ACB_SOURCE_DIR:?}"
+install_dir="${ACB_INSTALL_DIR:?}"
+build_steps="${ACB_BUILD_STEPS:?}"
+
+if [ -e "$source_dir/conanfile"* ]; then
+    conan install --profile "$triple" \
+                  $ACB_CONAN_INSTALL_ARGS \
+                  "$source_dir"
+fi
+
+if [ -e "$source_dir/meson.build" ]; then
+    meson --cross-file "$triple" \
+          --prefix "$install_dir" \
+          --backend ninja \
+          $ACB_MESON_ARGS \
+          "$source_dir"
+elif [ -e "$source_dir/CMakeLists.txt" ]; then
+    cmake -G Ninja \
+          "-DCMAKE_TOOLCHAIN_FILE=$cmake_toolchain_dir/$triple" \
+          $ACB_CMAKE_ARGS \
+          "$source_dir"
+else
+    echo 'Unknown build system.' 1>&2
+    exit 1
+fi
+
+for step in $(echo "$build_steps" | tr ',' "\n"); do
+    ninja $ACB_NINJA_ARGS $step
+done

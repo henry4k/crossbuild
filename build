@@ -1,0 +1,123 @@
+#!/bin/sh
+here="$(dirname "$0")"
+
+steps=",test,install"
+conan_install_args=
+meson_args=
+cmake_args=
+ninja_args=
+
+list_triples()
+{
+    docker image inspect \
+        --format '{{range $_, $e := .Config.Env}}{{println $e}}{{end}}' \
+        "$(cat "$here/.image_id")" | \
+        sed --quiet --regexp-extended 's/^.+?_TRIPLES=(.+)$/\1/p' | \
+        tr ',' "\n"
+}
+
+show_usage()
+{
+    cat <<EOF
+Usage: $0 [<options>] <cross-triple> <source-dir> <install-dir>
+
+Arguments:
+    cross-triple
+        Triple describing the host machine.
+        Available triples are:
+$(list_triples | sed -E 's/(.*)/        - \1/')
+
+    source-dir
+        Directory which contains the projects source code and
+        build system files.  Its not modified by the command.
+
+    install-dir
+        Compilations results can be written into this directory.
+
+Options:
+    -s --steps <steps>
+        A comma separated list of build steps.
+        The build driver (i.e. Ninja) is called with these in order.
+        Defaults to "$steps".
+
+    --conan-install-args <args>
+        Extra arguments that are passed to 'conan install'.
+
+    --meson-args <args>
+        Extra arguments that are passed to Meson.
+
+    --cmake-args <args>
+        Extra arguments that are passed to CMake.
+
+    --ninja-args <args>
+        Extra arguments that are passed to Ninja - which is always used to
+        drive the actual building. (This means Meson and CMake.)
+
+    -h --help
+        Show this help message.
+EOF
+}
+
+if [ $# -eq 0 ]; then
+    show_usage
+    exit 0
+fi
+
+while [ $# -gt 0 ]; do
+    argument="$1"
+    case "$argument" in
+        -s|--steps)
+            steps=$2
+            shift # value
+            ;;
+
+        --conan-install-args)
+            conan_install_args="$2"
+            shift # value
+            ;;
+
+        --meson-args)
+            meson_args="$2"
+            shift # value
+            ;;
+
+        --cmake-args)
+            cmake_args="$2"
+            shift # value
+            ;;
+
+        --ninja-args)
+            ninja_args="$2"
+            shift # value
+            ;;
+
+        -h|--help)
+            show_usage
+            exit 0
+            ;;
+
+        *)
+            break
+            ;;
+    esac
+    shift # argument
+done
+
+cross_triple="${1:?}"
+source_dir="$(realpath --canonicalize-existing "${2:?}")"
+install_dir="$(realpath --canonicalize-existing "${3:?}")"
+
+docker run --rm \
+           --tty \
+           --user $UID:$GID \
+           --read-only \
+           --mount "type=bind,source=$source_dir,destination=/source" \
+           --mount "type=bind,source=$install_dir,destination=/install" \
+           --tmpfs "/build:exec,uid=$UID,gid=$GID" \
+           -e "CROSS_TRIPLE=$cross_triple" \
+           -e "ACB_BUILD_STEPS=$steps" \
+           -e "ACB_CONAN_INSTALL_ARGS=$conan_install_args" \
+           -e "ACB_MESON_ARGS=$meson_args" \
+           -e "ACB_CMAKE_ARGS=$cmake_args" \
+           -e "ACB_NINJA_ARGS=$ninja_args" \
+           "$(cat "$here/.image_id")"

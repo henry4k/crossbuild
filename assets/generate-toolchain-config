@@ -15,6 +15,11 @@ parser:option'--meson-cross-file'
     :argname'<file>'
     :args(1)
 
+parser:option'--cmake-toolchain'
+    :description'Generated CMake toolchain is written to this file.'
+    :argname'<file>'
+    :args(1)
+
 
 local args = parser:parse()
 
@@ -98,6 +103,7 @@ local strip        =        find_executable('strip')
 local pkgconfig    =        find_executable('pkg-config', 'pkgconf')
 local gcov         =        find_executable('gcov')
 local windres      =        find_executable('windres')
+local ranlib       =        find_executable('ranlib')
 
 local compiler_info = gather_compiler_info(compiler_c)
 
@@ -145,6 +151,28 @@ local function write_meson_ini(filename, sections)
     file:close()
 end
 
+local function write_cmake_cache(filename, properties)
+    local file = assert(io.open(filename, 'w'))
+    for property_name, property_value in pairs(properties) do
+        file:write('SET(', property_name, ' ')
+        if type(property_value) == 'table' then
+            local first = true
+            for _, v in ipairs(property_value) do
+                if first then
+                    first = false
+                else
+                    file:write(' ')
+                end
+                file:write("'", tostring(v), "'")
+            end
+        else
+            file:write("'", tostring(v), "'")
+        end
+        file:write(')\n')
+    end
+    file:close()
+end
+
 local function write_conan_profile()
     local filename = args.conan_profile
     if not filename then
@@ -169,6 +197,7 @@ local function write_conan_profile()
                  PKGCONFIG = pkgconfig,
                  GCOV = gcov,
                  WINDRES = windres,
+                 RANLIB = ranlib,
                  PATH = '['..path.join(base_dir, 'bin')..']'} -- prepend bin directory
     -- See https://conanio.readthedocs.io/en/latest/reference/profiles.html#package-settings-and-env-vars
 
@@ -197,7 +226,8 @@ local function write_meson_cross_file()
                       strip = strip,
                       pkgconfig = pkgconfig,
                       gcov = gcov,
-                      windres = windres}
+                      windres = windres,
+                      ranlib = ranlib}
 
     local properties = {root = base_dir}
 
@@ -206,5 +236,34 @@ local function write_meson_cross_file()
                                properties = properties})
 end
 
+local function write_cmake_toolchain()
+    local filename = args.filename
+    if not filename then
+        filename = os.getenv'CMAKE_TOOLCHAIN_DIR' or
+                   path.join(path.user_home(), '.cmake/toolchains', args.host)
+        path.mkdir(path.dirname(filename))
+    end
+
+    local system_by_vendor = {linux = 'Linux',
+                              w32 = 'Windows',
+                              w64 = 'Windows',
+                              apple = 'Apple'}
+
+    write_cmake_cache(filename,
+                      {CMAKE_SYSTEM_NAME = system_by_vendor[host_vendor],
+                       CMAKE_SYSTEM_PROCESSOR = host_cpu_family,
+                       CMAKE_C_COMPILER = compiler_c,
+                       CMAKE_CXX_COMPILER = compiler_cpp,
+                       CMAKE_RC_COMPILER = windres,
+                       CMAKE_AR = ar,
+                       CMAKE_RANLIB = ranlib,
+                       CMAKE_FIND_ROOT_PATH = base_dir,
+                       CMAKE_FIND_ROOT_PATH_MODE_PROGRAM = 'BOTH',
+                       CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = 'ONLY',
+                       CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = 'ONLY',
+                       CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = 'ONLY'})
+end
+
 write_conan_profile()
 write_meson_cross_file()
+write_cmake_toolchain()
